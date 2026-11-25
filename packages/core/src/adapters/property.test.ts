@@ -12,6 +12,7 @@ import { adaptCodex } from './codex.js'
 import { adaptCursor } from './cursor.js'
 import { adaptGeminiCli } from './gemini-cli.js'
 import { adaptOpenCode } from './opencode.js'
+import { adaptZcode } from './zcode.js'
 
 // Tiny seeded PRNG (mulberry32) — reproducible mutation across runs.
 // Reference: https://stackoverflow.com/a/47593316 (public domain).
@@ -60,7 +61,8 @@ function isValidEvent(v: unknown): v is NormalizedEvent {
       e.agent === 'codex' ||
       e.agent === 'cursor' ||
       e.agent === 'gemini-cli' ||
-      e.agent === 'opencode') &&
+      e.agent === 'opencode' ||
+      e.agent === 'zcode') &&
     typeof e.event_type === 'string' &&
     typeof e.project === 'string' &&
     typeof e.session_id === 'string' &&
@@ -106,6 +108,13 @@ const HAPPY_OPENCODE = {
     time: { created: 1779257000000 },
   },
 }
+const HAPPY_ZCODE = {
+  session_id: 'abc-123',
+  cwd: '/x',
+  turnId: 'turn-456',
+  hook_event_name: 'UserPromptSubmit',
+  prompt: 'hi',
+}
 
 const EVENT_NAMES_CLAUDE = [
   'UserPromptSubmit',
@@ -143,6 +152,15 @@ const EVENT_NAMES_OPENCODE = [
   'session.created',
   'session.deleted',
   'message.updated',
+  'UnknownEvent',
+]
+const EVENT_NAMES_ZCODE = [
+  'UserPromptSubmit',
+  'Stop',
+  'SessionStart',
+  'PreToolUse',
+  'PostToolUse',
+  '',
   'UnknownEvent',
 ]
 
@@ -211,6 +229,20 @@ describe('adapter property tests (mulberry32 seed=42; ADPT-04)', () => {
         let result: NormalizedEvent | null = null
         expect(() => {
           result = adaptOpenCode(payload, name)
+        }).not.toThrow()
+        expect(result === null || isValidEvent(result)).toBe(true)
+      }
+    }
+  })
+
+  it('adaptZcode never throws across 200 mutations × 7 event names', () => {
+    const rng = mulberry32(42)
+    for (let i = 0; i < 200; i++) {
+      for (const name of EVENT_NAMES_ZCODE) {
+        const payload = mutate(rng, HAPPY_ZCODE)
+        let result: NormalizedEvent | null = null
+        expect(() => {
+          result = adaptZcode(payload, name)
         }).not.toThrow()
         expect(result === null || isValidEvent(result)).toBe(true)
       }

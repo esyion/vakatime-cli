@@ -17,6 +17,7 @@ const BRAND_AGENT_COLOR_HEX: Record<string, string> = {
   cursor: '#22d3ee',
   'gemini-cli': '#8b5cf6',
   opencode: '#3b82f6',
+  zcode: '#6366f1',
 }
 
 export function getAgentColorHex(agent: string, index: number): string {

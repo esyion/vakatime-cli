@@ -6,6 +6,7 @@ export {
   adaptCursor,
   adaptGeminiCli,
   adaptOpenCode,
+  adaptZcode,
 } from './adapters/index.js'
 export { getAgentColorHex } from './agent-theme.js'
 export type {

@@ -24,7 +24,18 @@ vakatime setup codex
 vakatime setup cursor
 vakatime setup opencode
 vakatime setup gemini-cli
+vakatime setup zcode
 ```
+
+## Remove agent hooks
+
+```sh
+vakatime remove claude-code   # also: codex | cursor | opencode | gemini-cli | zcode
+```
+
+Removes only the hooks vakatime registered; your own hooks and other tools'
+hooks are left untouched. A `.backup` copy is written next to each modified
+file.
 
 ## Commands
 

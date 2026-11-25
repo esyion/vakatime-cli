@@ -6,7 +6,7 @@ npm packages for [Vakatime](https://github.com/esyion/vakatime) AI coding analyt
 
 | Package | Description |
 |---|---|
-| [`@esyion/vakatime`](./packages/collector) | CLI collector — installs hooks for AI coding agents (Claude Code, Codex, Cursor, OpenCode, Gemini CLI) and uploads heartbeats to a Vakatime server |
+| [`@esyion/vakatime`](./packages/collector) | CLI collector — installs hooks for AI coding agents (Claude Code, Codex, Cursor, OpenCode, Gemini CLI, ZCode) and uploads heartbeats to a Vakatime server |
 | [`@esyion/vakatime-core`](./packages/core) | Pure TypeScript domain logic: heartbeat, agent event, usage, and summary calculations |
 
 ## Install
@@ -19,7 +19,8 @@ npm install -g @esyion/vakatime
 
 ```sh
 vakatime login --endpoint https://your-vakatime-domain.example --api-key vkt_xxx
-vakatime setup claude-code   # also: codex | cursor | opencode | gemini-cli
+vakatime setup claude-code   # also: codex | cursor | opencode | gemini-cli | zcode
+vakatime remove claude-code  # undo setup — removes only the hooks vakatime registered
 ```
 
 ## Development

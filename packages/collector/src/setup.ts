@@ -3,17 +3,23 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
-export type AgentType = 'claude-code' | 'codex' | 'cursor' | 'opencode' | 'gemini-cli'
+export type AgentType = 'claude-code' | 'codex' | 'cursor' | 'opencode' | 'gemini-cli' | 'zcode'
 
 type JsonRecord = Record<string, unknown>
 
 const CODEX_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const
+const ZCODE_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const
 const OPENCODE_PLUGIN_NAME = 'vakatime.js'
+
+function isJsonObject(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 
 function homePath(...parts: string[]): string {
   return join(homedir(), ...parts)
@@ -105,6 +111,104 @@ function isVakatimeCommand(command: unknown): command is string {
   return typeof command === 'string' && /\bvakatime(?:\.(?:exe|cmd))?\b/i.test(command) && command.includes('--source')
 }
 
+// True when the entry is one of OUR command hooks (claude-code / cursor /
+// gemini-cli / codex style `{ type: 'command', command }`).
+function isVakatimeCommandHook(hook: unknown): boolean {
+  return isJsonObject(hook) && isVakatimeCommand(hook.command)
+}
+
+/**
+ * Build the hook entry vakatime registers for ZCode.
+ *
+ * ZCode supports two hook types: `process` (argument vector, no shell — the
+ * most portable) and `command` (shell string). When we were launched via
+ * `node cli.js` we have a real executable + script path and use a `process`
+ * hook. When launched through a global bin shim (`vakatime` / `vakatime.cmd`)
+ * there is no bare executable to spawn on Windows (.cmd needs a shell), so we
+ * fall back to a `command` hook and let ZCode's shell resolve it.
+ *
+ * Pure: caller supplies the invocation so tests can be deterministic.
+ */
+export function buildZcodeHookEntry(invocation: VakatimeInvocation): JsonRecord {
+  if (invocation.spawnArgsPrefix.length > 0) {
+    return {
+      type: 'process',
+      command: invocation.spawnCommand,
+      args: [...invocation.spawnArgsPrefix, 'hook', '--source', 'zcode'],
+      timeoutMs: 10000,
+      statusMessage: 'Recording ZCode activity with Vakatime',
+    }
+  }
+  return {
+    type: 'command',
+    command: `${invocation.commandString} hook --source zcode`,
+    timeout: 10,
+    statusMessage: 'Recording ZCode activity with Vakatime',
+  }
+}
+
+// True when the entry is OUR ZCode hook, in either the `process` or the
+// `command` form produced by buildZcodeHookEntry.
+export function isVakatimeZcodeHook(hook: unknown): boolean {
+  if (!isJsonObject(hook)) return false
+  if (hook.type === 'process') {
+    const args = hook.args
+    if (!Array.isArray(args)) return false
+    const sourceIndex = args.indexOf('--source')
+    return args.includes('hook') && sourceIndex >= 0 && args[sourceIndex + 1] === 'zcode'
+  }
+  return hook.type === 'command' && isVakatimeCommand(hook.command) && String(hook.command).includes('zcode')
+}
+
+/**
+ * Strip every hook matching `predicate` from a grouped event map
+ * (`{ Event: [{ matcher?, hooks: [...] }] }` — claude-code / gemini-cli /
+ * zcode shape). Empty groups and empty event keys are dropped. Non-array
+ * values are preserved verbatim. Pure.
+ */
+export function stripVakatimeGroupedEvents(
+  events: Record<string, unknown>,
+  predicate: (hook: unknown) => boolean,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(events)) {
+    if (!Array.isArray(value)) {
+      out[key] = value
+      continue
+    }
+    const groups = value
+      .map((group) =>
+        isJsonObject(group) && Array.isArray(group.hooks)
+          ? { ...group, hooks: (group.hooks as unknown[]).filter((hook) => !predicate(hook)) }
+          : group,
+      )
+      .filter((group) => !(isJsonObject(group) && Array.isArray(group.hooks) && group.hooks.length === 0))
+    if (groups.length > 0) out[key] = groups
+  }
+  return out
+}
+
+/**
+ * Strip every entry matching `predicate` from a flat event map
+ * (`{ Event: [{ command }] }` — cursor shape). Empty event keys are
+ * dropped. Pure.
+ */
+export function stripVakatimeFlatEvents(
+  events: Record<string, unknown>,
+  predicate: (entry: unknown) => boolean,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(events)) {
+    if (!Array.isArray(value)) {
+      out[key] = value
+      continue
+    }
+    const kept = value.filter((entry) => !predicate(entry))
+    if (kept.length > 0) out[key] = kept
+  }
+  return out
+}
+
 function installClaudeCode(): void {
   const settingsPath = homePath('.claude', 'settings.json')
   mkdirSync(dirname(settingsPath), { recursive: true })
@@ -163,6 +267,38 @@ function ensureCodexHooksEnabled(configContent: string): string {
 
   const prefix = configContent.length > 0 && !configContent.endsWith('\n') ? '\n' : ''
   return `${configContent}${prefix}\n[features]\n${CODEX_MANAGED_SECTION_MARKER}\n${managedTrueLine}\n`
+}
+
+/**
+ * Reverse of ensureCodexHooksEnabled for `vakatime remove codex`. Only lines
+ * carrying our markers are touched; a user's own unmarked `hooks = true`
+ * survives. Three install shapes, three reverts:
+ *   A. we appended a whole `[features]` section  → remove the section
+ *   B. we flipped `hooks = false`                → flip it back
+ *   C. we inserted a line into an existing table → remove the line
+ * Pure.
+ */
+export function revertCodexHooksEnabled(configContent: string): string {
+  // A: the exact section ensureCodexHooksEnabled appends on a bare config.
+  const sectionPattern = new RegExp(
+    `\\n?\\[features\\]\\n${CODEX_MANAGED_SECTION_MARKER}\\n\\s*hooks = true ${CODEX_FEATURE_MARKER}[^\\n]*\\n?`,
+    'm',
+  )
+  if (sectionPattern.test(configContent)) {
+    return configContent.replace(sectionPattern, '')
+  }
+
+  // B: we replaced a `hooks = false` line — restore it.
+  const flippedPattern = new RegExp(`^(\\s*)hooks = true ${CODEX_FEATURE_MARKER}: previous=false[^\\n]*$`, 'm')
+  if (flippedPattern.test(configContent)) {
+    return configContent.replace(flippedPattern, '$1hooks = false')
+  }
+
+  // C: we inserted a managed line into an existing `[features]` table.
+  // Consume the whole line INCLUDING its trailing newline so no blank line
+  // remains (horizontal whitespace only — `\s` would swallow newlines).
+  const insertedPattern = new RegExp(`^[ \\t]*hooks = true ${CODEX_FEATURE_MARKER}[ \\t]*\\r?\\n`, 'm')
+  return configContent.replace(insertedPattern, '')
 }
 
 function buildCodexInlineHooksBlock(command: string): string {
@@ -470,6 +606,109 @@ function installGeminiCli(): void {
   console.log(`Gemini CLI hooks configured in ${settingsPath}`)
 }
 
+function installZcode(): void {
+  const configPath = homePath('.zcode', 'cli', 'config.json')
+  mkdirSync(dirname(configPath), { recursive: true })
+  const config = readJsonObject(configPath)
+  backupIfExists(configPath)
+
+  const hooks = isJsonObject(config.hooks) ? config.hooks : {}
+  const events = isJsonObject(hooks.events) ? hooks.events : {}
+
+  // Idempotent: strip any previous vakatime entries first, then append a
+  // fresh group per event. No matcher — we want every occurrence.
+  const stripped = stripVakatimeGroupedEvents(events, isVakatimeZcodeHook)
+  for (const event of ZCODE_HOOK_EVENTS) {
+    const arr = Array.isArray(stripped[event]) ? (stripped[event] as JsonRecord[]) : []
+    stripped[event] = [...arr, { hooks: [buildZcodeHookEntry(resolveVakatimeInvocation())] }]
+  }
+
+  hooks.events = stripped
+  // ZCode disables configuration-file hooks unless explicitly enabled.
+  hooks.enabled = true
+  config.hooks = hooks
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
+  console.log(`ZCode hooks configured in ${configPath}`)
+}
+
+function removeClaudeCode(): void {
+  const settingsPath = homePath('.claude', 'settings.json')
+  const settings = readJsonObject(settingsPath)
+  if (!isJsonObject(settings.hooks)) return
+
+  const next = stripVakatimeGroupedEvents(settings.hooks, isVakatimeCommandHook)
+  if (JSON.stringify(next) === JSON.stringify(settings.hooks)) return
+
+  backupIfExists(settingsPath)
+  settings.hooks = next
+  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`)
+  console.log(`Claude Code hooks removed from ${settingsPath}`)
+}
+
+function removeCodex(): void {
+  const configPath = homePath('.codex', 'config.toml')
+  removeLegacyCodexJsonHooks()
+
+  if (!existsSync(configPath)) return
+  const configContent = readFileSync(configPath, 'utf-8')
+  const nextContent = revertCodexHooksEnabled(removeManagedCodexInlineHooksBlock(configContent))
+  if (nextContent === configContent) return
+
+  backupIfExists(configPath)
+  writeFileSync(configPath, nextContent)
+  console.log(`Codex hooks removed from ${configPath}`)
+}
+
+function removeCursor(): void {
+  const hooksPath = homePath('.cursor', 'hooks.json')
+  const hooksData = readJsonObject(hooksPath)
+  if (!isJsonObject(hooksData.hooks)) return
+
+  const next = stripVakatimeFlatEvents(hooksData.hooks, (entry) => isVakatimeCommandHook(entry))
+  if (JSON.stringify(next) === JSON.stringify(hooksData.hooks)) return
+
+  backupIfExists(hooksPath)
+  hooksData.hooks = next
+  writeFileSync(hooksPath, `${JSON.stringify(hooksData, null, 2)}\n`)
+  console.log(`Cursor hooks removed from ${hooksPath}`)
+}
+
+function removeGeminiCli(): void {
+  const settingsPath = homePath('.gemini', 'settings.json')
+  const settings = readJsonObject(settingsPath)
+  if (!isJsonObject(settings.hooks)) return
+
+  const next = stripVakatimeGroupedEvents(settings.hooks, isVakatimeCommandHook)
+  if (JSON.stringify(next) === JSON.stringify(settings.hooks)) return
+
+  backupIfExists(settingsPath)
+  settings.hooks = next
+  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`)
+  console.log(`Gemini CLI hooks removed from ${settingsPath}`)
+}
+
+function removeOpenCode(): void {
+  const pluginPath = join(opencodeConfigDir(), 'plugins', OPENCODE_PLUGIN_NAME)
+  if (!existsSync(pluginPath)) return
+
+  rmSync(pluginPath)
+  console.log(`OpenCode plugin removed: ${pluginPath}`)
+}
+
+function removeZcode(): void {
+  const configPath = homePath('.zcode', 'cli', 'config.json')
+  const config = readJsonObject(configPath)
+  if (!isJsonObject(config.hooks) || !isJsonObject(config.hooks.events)) return
+
+  const next = stripVakatimeGroupedEvents(config.hooks.events, isVakatimeZcodeHook)
+  if (JSON.stringify(next) === JSON.stringify(config.hooks.events)) return
+
+  backupIfExists(configPath)
+  config.hooks.events = next
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
+  console.log(`ZCode hooks removed from ${configPath}`)
+}
+
 export function setupAgent(agent: AgentType): void {
   switch (agent) {
     case 'claude-code':
@@ -487,11 +726,44 @@ export function setupAgent(agent: AgentType): void {
     case 'gemini-cli':
       installGeminiCli()
       break
+    case 'zcode':
+      installZcode()
+      break
   }
 
   console.log(`\nSetup complete for ${agent}. It will now report usage data to Vakatime.`)
 }
 
+/**
+ * Remove every hook vakatime registered for `agent` in that agent's native
+ * configuration. Other hooks (the user's own or from other tools) are left
+ * untouched; a `.backup` copy is written before each modified file changes.
+ */
+export function removeAgent(agent: AgentType): void {
+  switch (agent) {
+    case 'claude-code':
+      removeClaudeCode()
+      break
+    case 'codex':
+      removeCodex()
+      break
+    case 'cursor':
+      removeCursor()
+      break
+    case 'opencode':
+      removeOpenCode()
+      break
+    case 'gemini-cli':
+      removeGeminiCli()
+      break
+    case 'zcode':
+      removeZcode()
+      break
+  }
+
+  console.log(`\nRemoval complete for ${agent}. It will no longer report usage data to Vakatime.`)
+}
+
 export function listSupportedAgents(): string[] {
-  return ['claude-code', 'codex', 'cursor', 'opencode', 'gemini-cli']
+  return ['claude-code', 'codex', 'cursor', 'opencode', 'gemini-cli', 'zcode']
 }

@@ -5,10 +5,11 @@ import {
   adaptCursor,
   adaptOpenCode,
   adaptGeminiCli,
+  adaptZcode,
 } from "@esyion/vakatime-core";
 import type { HeartbeatPayload } from "./upload.js";
 
-export type HookSource = "claude-code" | "codex" | "cursor" | "opencode" | "gemini-cli";
+export type HookSource = "claude-code" | "codex" | "cursor" | "opencode" | "gemini-cli" | "zcode";
 
 export function eventToHeartbeatPayload(
   event: NormalizedEvent,
@@ -53,6 +54,9 @@ export function adaptHookPayload(
       break;
     case "gemini-cli":
       event = adaptGeminiCli(payload, eventName);
+      break;
+    case "zcode":
+      event = adaptZcode(payload, eventName);
       break;
   }
 

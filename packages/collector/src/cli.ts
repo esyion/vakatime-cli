@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { configPath, hookLogPath, queuePath, readConfig, writeConfig } from './config.js'
 import { adaptHookPayload, readStdinJson } from './hook.js'
 import { enqueueHeartbeat, flushQueue, postHeartbeat, readQueue, type HeartbeatPayload } from './upload.js'
-import { setupAgent, listSupportedAgents, type AgentType } from './setup.js'
+import { setupAgent, removeAgent, listSupportedAgents, type AgentType } from './setup.js'
 import { dirname } from 'node:path'
 
 function option(args: string[], name: string): string | null {
@@ -20,11 +20,12 @@ function printHelp(): void {
 
 Usage:
   vakatime login --endpoint <url> --api-key <key>
-  vakatime setup <agent>       # auto-configure hooks (claude-code, codex, cursor, opencode, gemini-cli)
+  vakatime setup <agent>       # auto-configure hooks (claude-code, codex, cursor, opencode, gemini-cli, zcode)
+  vakatime remove <agent>      # remove the hooks vakatime registered
   vakatime status
   vakatime heartbeat --entity <path> [--project name] [--language ts] [--editor name]
   vakatime flush
-  vakatime hook --source codex|claude-code|cursor|opencode|gemini-cli
+  vakatime hook --source codex|claude-code|cursor|opencode|gemini-cli|zcode
   vakatime --source <agent>   # hook mode shorthand
 `)
 }
@@ -77,8 +78,8 @@ async function uploadOrQueue(payload: HeartbeatPayload): Promise<void> {
 async function runHook(args: string[]): Promise<void> {
   const rawSource = option(args, '--source')
   const source = rawSource === 'claude' ? 'claude-code' : rawSource
-  if (source !== 'codex' && source !== 'claude-code' && source !== 'cursor' && source !== 'opencode' && source !== 'gemini-cli') {
-    throw new Error('--source must be codex, claude-code, cursor, opencode, or gemini-cli')
+  if (source !== 'codex' && source !== 'claude-code' && source !== 'cursor' && source !== 'opencode' && source !== 'gemini-cli' && source !== 'zcode') {
+    throw new Error('--source must be codex, claude-code, cursor, opencode, gemini-cli, or zcode')
   }
 
   appendHookLog({ phase: 'hook-start', source, argv: args })
@@ -123,6 +124,16 @@ async function run(args = process.argv.slice(2)): Promise<void> {
         process.exit(1)
       }
       setupAgent(agent as AgentType)
+      break
+    }
+    case 'remove': {
+      const agent = args[1]
+      const supported = listSupportedAgents()
+      if (!agent || !supported.includes(agent)) {
+        console.error(`remove requires a valid agent: ${supported.join(', ')}`)
+        process.exit(1)
+      }
+      removeAgent(agent as AgentType)
       break
     }
     case 'status': {

@@ -6,6 +6,8 @@ settings:
 
 importers:
 
+  .: {}
+
   packages/collector:
     dependencies:
       '@esyion/vakatime-core':
