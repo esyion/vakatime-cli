@@ -33,4 +33,4 @@ pnpm -r build
 
 ## Publishing
 
-Push a `v*.*.*` tag to trigger the [npm publish workflow](./.github/workflows/npm-publish.yml). Both package versions are bumped together. See [docs/npm-publishing.md](https://github.com/esyion/vakatime/blob/master/docs/npm-publishing.md) in the app repo for the runbook.
+Push a `v*.*.*` tag to trigger the [npm publish workflow](./.github/workflows/npm-publish.yml). Both package versions are bumped together. See [docs/npm-publishing.md](./docs/npm-publishing.md) for the runbook.
