@@ -1,0 +1,74 @@
+name: Publish npm packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, pack, and publish npm packages
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_CONFIG_PROVENANCE: true
+      PNPM_CONFIG_MINIMUM_RELEASE_AGE: '0'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test packages
+        run: |
+          pnpm --filter @esyion/vakatime-core test
+          pnpm --filter @esyion/vakatime test
+
+      - name: Build packages
+        run: |
+          pnpm --filter @esyion/vakatime-core build
+          pnpm --filter @esyion/vakatime build
+
+      - name: Pack packages
+        run: |
+          mkdir -p npm-artifacts
+          pnpm --filter @esyion/vakatime-core pack --pack-destination npm-artifacts
+          pnpm --filter @esyion/vakatime pack --pack-destination npm-artifacts
+          ls -la npm-artifacts
+
+      - name: Upload packed tarballs
+        uses: actions/upload-artifact@v6
+        with:
+          name: npm-tarballs
+          path: npm-artifacts/*.tgz
+          if-no-files-found: error
+
+      - name: Publish core package
+        run: pnpm --filter @esyion/vakatime-core publish --access public --no-git-checks --provenance
+
+      - name: Publish collector package
+        run: pnpm --filter @esyion/vakatime publish --access public --no-git-checks --provenance

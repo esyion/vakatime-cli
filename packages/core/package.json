@@ -1,0 +1,41 @@
+{
+  "name": "@esyion/vakatime-core",
+  "version": "0.1.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.5"
+  },
+  "description": "Pure TypeScript domain logic for Vakatime heartbeat, agent event, usage, and summary calculations.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/esyion/vakatime-cli.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/esyion/vakatime-cli#readme",
+  "bugs": {
+    "url": "https://github.com/esyion/vakatime-cli/issues"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
