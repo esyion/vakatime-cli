@@ -1,4 +1,6 @@
+import { hostname } from 'node:os'
 import { uploadOrQueue } from './shared.js'
+import { CLI_VERSION } from '../version.js'
 
 export interface HeartbeatOptions {
   entity: string
@@ -24,7 +26,11 @@ export async function runHeartbeatCommand(opts: HeartbeatOptions): Promise<void>
     language: opts.language,
     editor: opts.editor,
     operating_system: process.platform,
-    machine_name: opts.machine ?? undefined,
+    machine_name: opts.machine ?? hostname(),
     is_write: opts.write,
+    meta: {
+      cpu_arch: process.arch,
+      cli_version: CLI_VERSION,
+    },
   })
 }

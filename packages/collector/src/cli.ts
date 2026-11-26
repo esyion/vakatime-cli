@@ -7,8 +7,9 @@ import { Argument, Command } from 'commander'
 import { configPath, writeConfig } from './config.js'
 import { listSupportedAgents, removeAgent, setupAgent, type AgentType } from './setup.js'
 import { runHookCommand } from './commands/hook.js'
+import { CLI_VERSION } from './version.js'
 
-const VERSION = '0.3.0'
+const VERSION = CLI_VERSION
 
 const program = new Command()
 program

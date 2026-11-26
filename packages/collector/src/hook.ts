@@ -1,4 +1,5 @@
-﻿import type { NormalizedEvent } from "@esyion/vakatime-core";
+﻿import { hostname } from "node:os";
+import type { NormalizedEvent } from "@esyion/vakatime-core";
 import {
   adaptClaudeCode,
   adaptCodex,
@@ -7,6 +8,7 @@ import {
   adaptGeminiCli,
   adaptZcode,
 } from "@esyion/vakatime-core";
+import { CLI_VERSION } from "./version.js";
 import type { HeartbeatPayload } from "./upload.js";
 
 export type HookSource = "claude-code" | "codex" | "cursor" | "opencode" | "gemini-cli" | "zcode";
@@ -23,10 +25,14 @@ export function eventToHeartbeatPayload(
     agent: event.agent,
     session_id: event.session_id,
     turn_id: event.turn_id,
+    operating_system: process.platform,
+    machine_name: hostname(),
     meta: {
       event_type: event.event_type,
       timezone: event.timezone,
       duration_sec: event.duration_sec,
+      cpu_arch: process.arch,
+      cli_version: CLI_VERSION,
       ...event.meta,
     },
   };
