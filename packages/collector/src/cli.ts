@@ -60,20 +60,12 @@ async function main(): Promise<void> {
 
   program
     .command('status')
-    .description('show collector config, endpoint, key prefix, and offline queue size')
-    .action(async () => {
-      const { runStatusCommand } = await import('./commands/status.js')
-      await runStatusCommand()
-    })
-
-  program
-    .command('stats')
-    .description('activity summary + heatmap built from the local hook log')
+    .description('one-shot overview: config, per-agent hook state, and an activity heatmap from the local hook log')
     .option('--weeks <n>', 'heatmap width in weeks', '17')
     .action(async (options: { weeks: string }) => {
-      const { runStatsCommand } = await import('./commands/stats.js')
+      const { runStatusCommand } = await import('./commands/status.js')
       const weeks = Number.parseInt(options.weeks, 10)
-      await runStatsCommand(Number.isFinite(weeks) && weeks > 0 ? weeks : 17)
+      await runStatusCommand(Number.isFinite(weeks) && weeks > 0 ? weeks : 17)
     })
 
   program
@@ -128,7 +120,7 @@ Examples:
   $ vakatime login --endpoint http://localhost:3000 --api-key vkt_xxx
   $ vakatime setup            # interactive agent picker
   $ vakatime setup codex
-  $ vakatime stats            # terminal heatmap
+  $ vakatime status           # overview: config + hook state + activity heatmap
   $ vakatime remove codex     # uninstall the hooks for one agent
   $ echo '<hook json>' | vakatime hook --source codex`,
   )

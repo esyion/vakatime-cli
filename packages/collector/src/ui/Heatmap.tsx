@@ -1,5 +1,4 @@
-import { Box, Text, useApp, useInput } from 'ink'
-import { useState } from 'react'
+import { Box, Text } from 'ink'
 import { buildHeatmapGrid, heatLevel, HEAT_LEVELS } from '../stats.js'
 import type { HookLogSummary } from '../stats.js'
 
@@ -36,7 +35,7 @@ function MonthLabels({ columns }: { columns: { date: string }[][] }) {
   )
 }
 
-function Heatmap({ summary, weeks }: { summary: HookLogSummary; weeks: number }) {
+export function Heatmap({ summary, weeks }: { summary: HookLogSummary; weeks: number }) {
   const grid = buildHeatmapGrid(summary, weeks)
   return (
     <Box flexDirection="column" gap={1}>
@@ -69,53 +68,8 @@ function Heatmap({ summary, weeks }: { summary: HookLogSummary; weeks: number })
         ))}
       </Box>
       <Text dimColor>
-        {grid.totalInRange} events in the last {grid.weeks} weeks · levels 0..{HEAT_LEVELS - 1}
+        {grid.totalInRange} events in the last {grid.weeks} weeks
       </Text>
-    </Box>
-  )
-}
-
-export interface StatsAppProps {
-  initial: HookLogSummary
-  reload: () => HookLogSummary
-  weeks: number
-}
-
-export function StatsApp({ initial, reload, weeks }: StatsAppProps) {
-  const { exit } = useApp()
-  const [summary, setSummary] = useState(initial)
-
-  useInput((input, key) => {
-    if (input === 'q' || key.escape || key.return) {
-      exit()
-      return
-    }
-    if (input === 'r') {
-      setSummary(reload())
-    }
-  })
-
-  const agents = Object.entries(summary.byAgent).sort((a, b) => b[1] - a[1])
-  const lastEvent = summary.lastEventAt === null ? 'never' : summary.lastEventAt.toLocaleString()
-
-  return (
-    <Box flexDirection="column" gap={1} paddingX={1} paddingY={1}>
-      <Text bold color="magenta">
-        vakatime activity
-        <Text dimColor> — q quit · r refresh</Text>
-      </Text>
-      <Heatmap summary={summary} weeks={weeks} />
-      <Box flexDirection="column">
-        {agents.map(([agent, count]) => (
-          <Text key={agent}>
-            {'  '}
-            <Text color="cyan">{agent.padEnd(12)}</Text>
-            <Text>{count} events</Text>
-          </Text>
-        ))}
-        {agents.length === 0 && <Text dimColor>No recorded activity yet — hooks have not fired.</Text>}
-      </Box>
-      <Text dimColor>Last event: {lastEvent}</Text>
     </Box>
   )
 }
