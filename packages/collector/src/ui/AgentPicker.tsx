@@ -3,16 +3,18 @@ import { useState } from 'react'
 
 export interface AgentPickerProps {
   agents: string[]
+  /** indices pre-checked because vakatime already has hooks installed for them */
+  preChecked: ReadonlySet<number>
   onSubmit: (selected: string[]) => void
 }
 
 // Minimal multi-select. ↑/↓ move, space toggles, `a` selects all, enter
 // confirms, esc cancels. Kept dependency-free (no ink-select-input) so the
 // collector gains nothing beyond ink/react/commander.
-export function AgentPicker({ agents, onSubmit }: AgentPickerProps) {
+export function AgentPicker({ agents, preChecked, onSubmit }: AgentPickerProps) {
   const { exit } = useApp()
   const [cursor, setCursor] = useState(0)
-  const [checked, setChecked] = useState<ReadonlySet<number>>(new Set())
+  const [checked, setChecked] = useState<ReadonlySet<number>>(() => new Set(preChecked))
 
   const clampCursor = (next: number): number => Math.max(0, Math.min(agents.length - 1, next))
 
@@ -61,15 +63,22 @@ export function AgentPicker({ agents, onSubmit }: AgentPickerProps) {
         {agents.map((agent, index) => {
           const isChecked = checked.has(index)
           const isCursor = index === cursor
+          const wasConfigured = preChecked.has(index)
           return (
             <Text key={agent} {...(isCursor ? { color: 'cyan' as const } : {})}>
               {isCursor ? '>' : ' '}
               {isChecked ? '[x]' : '[ ]'} {agent}
+              {wasConfigured && (
+                <Text dimColor>
+                  {' '}
+                  (configured)
+                </Text>
+              )}
             </Text>
           )
         })}
       </Box>
-      <Text dimColor>space toggle · a select all · enter confirm · esc cancel</Text>
+      <Text dimColor>space toggle · a select all · enter confirm · esc cancel · pre-checked = already configured</Text>
     </Box>
   )
 }

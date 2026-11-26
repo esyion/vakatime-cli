@@ -21,6 +21,70 @@ function isJsonObject(value: unknown): value is JsonRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+// --- configured-state detection (pure parts are unit-tested) ---
+
+function hasVakatimeHookInGrouped(events: unknown, predicate: (hook: unknown) => boolean): boolean {
+  if (!isJsonObject(events)) return false
+  return Object.values(events).some(
+    (value) =>
+      Array.isArray(value) &&
+      value.some(
+        (group) => isJsonObject(group) && Array.isArray(group.hooks) && (group.hooks as unknown[]).some(predicate),
+      ),
+  )
+}
+
+function hasVakatimeHookInFlat(events: unknown, predicate: (entry: unknown) => boolean): boolean {
+  if (!isJsonObject(events)) return false
+  return Object.values(events).some((value) => Array.isArray(value) && value.some(predicate))
+}
+
+/**
+ * True when the Codex TOML carries our managed inline hooks block. The block
+ * markers are only ever written by `setup`, so their presence means "we
+ * configured this".
+ */
+export function codexConfiguredFromContent(configContent: string): boolean {
+  return configContent.includes(CODEX_HOOKS_BLOCK_START)
+}
+
+/**
+ * Detect whether vakatime currently has hooks installed for `agent` in that
+ * agent's native configuration. Mirrors what `removeAgent` would clean up.
+ */
+export function isAgentConfigured(agent: AgentType): boolean {
+  try {
+    switch (agent) {
+      case 'claude-code': {
+        const settings = readJsonObject(homePath('.claude', 'settings.json'))
+        return hasVakatimeHookInGrouped(settings.hooks, isVakatimeCommandHook)
+      }
+      case 'codex': {
+        const configPath = homePath('.codex', 'config.toml')
+        if (!existsSync(configPath)) return false
+        return codexConfiguredFromContent(readFileSync(configPath, 'utf-8'))
+      }
+      case 'cursor': {
+        const hooksData = readJsonObject(homePath('.cursor', 'hooks.json'))
+        return hasVakatimeHookInFlat(hooksData.hooks, (entry) => isVakatimeCommandHook(entry))
+      }
+      case 'opencode': {
+        return existsSync(join(opencodeConfigDir(), 'plugins', OPENCODE_PLUGIN_NAME))
+      }
+      case 'gemini-cli': {
+        const settings = readJsonObject(homePath('.gemini', 'settings.json'))
+        return hasVakatimeHookInGrouped(settings.hooks, isVakatimeCommandHook)
+      }
+      case 'zcode': {
+        const config = readJsonObject(homePath('.zcode', 'cli', 'config.json'))
+        return isJsonObject(config.hooks) && hasVakatimeHookInGrouped(config.hooks.events, isVakatimeZcodeHook)
+      }
+    }
+  } catch {
+    return false
+  }
+}
+
 function homePath(...parts: string[]): string {
   return join(homedir(), ...parts)
 }

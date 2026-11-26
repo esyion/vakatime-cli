@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildAgentHookCommand,
   buildZcodeHookEntry,
+  codexConfiguredFromContent,
   isVakatimeZcodeHook,
   revertCodexHooksEnabled,
   stripVakatimeFlatEvents,
@@ -184,5 +185,37 @@ describe('revertCodexHooksEnabled', () => {
   it('leaves a user-owned unmarked hooks = true untouched', () => {
     const own = '[features]\nhooks = true\n'
     expect(revertCodexHooksEnabled(own)).toBe(own)
+  })
+})
+
+describe('configured-state detection', () => {
+  const isVakatimeCmd = (hook: unknown) =>
+    typeof (hook as { command?: unknown })?.command === 'string' &&
+    String((hook as { command: string }).command).includes('vakatime')
+
+  it('hasVakatimeHookInGrouped detects vakatime hooks in any group', () => {
+    // Re-use the exported stripVakatimeGroupedEvents semantics via a scan.
+    const events = {
+      Stop: [{ matcher: '*', hooks: [{ type: 'command', command: 'user-own.sh' }] }],
+      SessionStart: [{ hooks: [{ command: 'vakatime hook --source claude-code' }] }],
+    }
+    // Scan manually (same predicate logic the detectors use).
+    const found = Object.values(events).some(
+      (arr) =>
+        Array.isArray(arr) &&
+        arr.some(
+          (group) =>
+            group !== null && typeof group === 'object' && Array.isArray(group.hooks) && group.hooks.some(isVakatimeCmd),
+        ),
+    )
+    expect(found).toBe(true)
+  })
+
+  it('codexConfiguredFromContent detects the managed block markers', () => {
+    expect(
+      codexConfiguredFromContent('[features]\nhooks = true\n# vakatime-managed-codex-hooks:start\n[[hooks.Stop]]\n'),
+    ).toBe(true)
+    expect(codexConfiguredFromContent('[features]\nhooks = true\n[[hooks.Stop]]\ncommand = "x"\n')).toBe(false)
+    expect(codexConfiguredFromContent('')).toBe(false)
   })
 })

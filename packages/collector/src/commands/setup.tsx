@@ -1,4 +1,4 @@
-import { listSupportedAgents, setupAgent, type AgentType } from '../setup.js'
+import { isAgentConfigured, listSupportedAgents, setupAgent, type AgentType } from '../setup.js'
 
 export async function runSetupCommand(agent: string | undefined): Promise<void> {
   const supported = listSupportedAgents()
@@ -19,11 +19,17 @@ export async function runSetupCommand(agent: string | undefined): Promise<void> 
     process.exit(1)
   }
 
+  const preChecked = new Set(
+    supported.map((name, index) => (isAgentConfigured(name as AgentType) ? index : -1)).filter((index) => index >= 0),
+  )
+
   const selected = await new Promise<string[]>((resolve) => {
     void (async () => {
       const { render } = await import('ink')
       const { AgentPicker } = await import('../ui/AgentPicker.js')
-      const instance = render(<AgentPicker agents={supported} onSubmit={(picked) => resolve(picked)} />)
+      const instance = render(
+        <AgentPicker agents={supported} preChecked={preChecked} onSubmit={(picked) => resolve(picked)} />,
+      )
       void instance.waitUntilExit()
     })()
   })
