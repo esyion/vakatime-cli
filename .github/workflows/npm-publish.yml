@@ -43,15 +43,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Test packages
-        run: |
-          pnpm --filter @esyion/vakatime-core test
-          pnpm --filter @esyion/vakatime test
-
       - name: Build packages
         run: |
           pnpm --filter @esyion/vakatime-core build
           pnpm --filter @esyion/vakatime build
+
+      # Tests import @esyion/vakatime-core, which resolves to its built dist —
+      # so build MUST happen before test (collector tests cover hook.ts).
+      - name: Test packages
+        run: |
+          pnpm --filter @esyion/vakatime-core test
+          pnpm --filter @esyion/vakatime test
 
       - name: Pack packages
         run: |
