@@ -37,6 +37,20 @@ Removes only the hooks vakatime registered; your own hooks and other tools'
 hooks are left untouched. A `.backup` copy is written next to each modified
 file.
 
+## Activity stats and heatmap
+
+```sh
+vakatime stats             # interactive terminal heatmap (Ink TUI)
+vakatime stats --weeks 26  # wider heatmap
+```
+
+Built from the local hook log. Inside a terminal it renders a
+GitHub-style heatmap (`q` quit, `r` refresh); piped output falls back to a
+plain-text summary.
+
+`vakatime setup` without an agent argument opens an interactive multi-select
+picker (arrow keys, space to toggle, enter to confirm).
+
 ## Commands
 
 ```sh

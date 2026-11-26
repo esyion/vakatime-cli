@@ -1,189 +1,137 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
-import { configPath, hookLogPath, queuePath, readConfig, writeConfig } from './config.js'
-import { adaptHookPayload, readStdinJson } from './hook.js'
-import { enqueueHeartbeat, flushQueue, postHeartbeat, readQueue, type HeartbeatPayload } from './upload.js'
-import { setupAgent, removeAgent, listSupportedAgents, type AgentType } from './setup.js'
-import { dirname } from 'node:path'
+// Commander-based entrypoint. This module only imports light dependencies
+// (commander, config, setup, upload, and the hook command); ink/react are
+// loaded dynamically inside the interactive commands so the agent-spawned
+// `hook` path keeps its fast cold start.
+import { Argument, Command } from 'commander'
+import { configPath, writeConfig } from './config.js'
+import { listSupportedAgents, removeAgent, setupAgent, type AgentType } from './setup.js'
+import { runHookCommand } from './commands/hook.js'
 
-function option(args: string[], name: string): string | null {
-  const index = args.indexOf(name)
-  return index >= 0 ? (args[index + 1] ?? null) : null
+const VERSION = '0.3.0'
+
+const program = new Command()
+program
+  .name('vakatime')
+  .description('Vakatime collector — records AI coding agent activity and uploads heartbeats')
+  .version(VERSION)
+
+const agentChoices = listSupportedAgents()
+const agentNames = agentChoices.join(', ')
+
+// Legacy hook-mode shorthand: `vakatime --source <agent>` with no subcommand.
+// Agents invoke this directly, so it is checked before commander parsing.
+const argv = process.argv.slice(2)
+const first = argv[0] ?? ''
+const subcommands = new Set(['login', 'setup', 'remove', 'status', 'stats', 'flush', 'heartbeat', 'hook', 'help'])
+if (argv.includes('--source') && !subcommands.has(first) && !argv.some((a) => a === '--help' || a === '-h' || a === '-V')) {
+  void runHookCommand(argv).then(() => process.exit(process.exitCode ?? 0))
+} else {
+  void main()
 }
 
-function has(args: string[], name: string): boolean {
-  return args.includes(name)
-}
-
-function printHelp(): void {
-  console.log(`vakatime collector
-
-Usage:
-  vakatime login --endpoint <url> --api-key <key>
-  vakatime setup <agent>       # auto-configure hooks (claude-code, codex, cursor, opencode, gemini-cli, zcode)
-  vakatime remove <agent>      # remove the hooks vakatime registered
-  vakatime status
-  vakatime heartbeat --entity <path> [--project name] [--language ts] [--editor name]
-  vakatime flush
-  vakatime hook --source codex|claude-code|cursor|opencode|gemini-cli|zcode
-  vakatime --source <agent>   # hook mode shorthand
-`)
-}
-
-function appendHookLog(entry: Record<string, unknown>): void {
-  try {
-    const path = hookLogPath()
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    appendFileSync(path, `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`, { encoding: 'utf8' })
-  } catch {
-    // Hook logging must never break the agent client.
-  }
-}
-
-function payloadSummary(payload: Record<string, unknown>): Record<string, unknown> {
-  return {
-    hook_event_name: payload.hook_event_name,
-    event: payload.event,
-    session_id: payload.session_id,
-    turn_id: payload.turn_id,
-    cwd: payload.cwd,
-    keys: Object.keys(payload).sort(),
-  }
-}
-function requireConfig() {
-  const config = readConfig()
-  if (!config) throw new Error(`Not logged in. Run: vakatime login --endpoint <url> --api-key <key>`)
-  return config
-}
-
-async function uploadOrQueue(payload: HeartbeatPayload): Promise<void> {
-  const config = requireConfig()
-  try {
-    await postHeartbeat(config, payload)
-    appendHookLog({ phase: 'upload', status: 'ok', entity: payload.entity, agent: payload.agent })
-    console.log('heartbeat uploaded')
-  } catch (err) {
-    enqueueHeartbeat(payload)
-    appendHookLog({
-      phase: 'upload',
-      status: 'queued',
-      entity: payload.entity,
-      agent: payload.agent,
-      error: err instanceof Error ? err.message : String(err),
-    })
-    console.error(err instanceof Error ? err.message : String(err))
-    console.error(`queued heartbeat at ${queuePath()}`)
-  }
-}
-async function runHook(args: string[]): Promise<void> {
-  const rawSource = option(args, '--source')
-  const source = rawSource === 'claude' ? 'claude-code' : rawSource
-  if (source !== 'codex' && source !== 'claude-code' && source !== 'cursor' && source !== 'opencode' && source !== 'gemini-cli' && source !== 'zcode') {
-    throw new Error('--source must be codex, claude-code, cursor, opencode, gemini-cli, or zcode')
-  }
-
-  appendHookLog({ phase: 'hook-start', source, argv: args })
-  const payload = await readStdinJson()
-  if (!payload) {
-    appendHookLog({ phase: 'stdin', source, status: 'empty' })
-    return
-  }
-
-  appendHookLog({ phase: 'stdin', source, status: 'parsed', payload: payloadSummary(payload) })
-  const heartbeat = adaptHookPayload(source, payload)
-  if (!heartbeat) {
-    appendHookLog({ phase: 'adapt', source, status: 'ignored', payload: payloadSummary(payload) })
-    return
-  }
-
-  appendHookLog({ phase: 'adapt', source, status: 'ok', heartbeat })
-  await uploadOrQueue(heartbeat)
-}
-async function run(args = process.argv.slice(2)): Promise<void> {
-  const command = args[0]
-
-  if (has(args, '--source') && command !== 'login' && command !== 'heartbeat') {
-    await runHook(args)
-    return
-  }
-
-  switch (command) {
-    case 'login': {
-      const endpoint = option(args, '--endpoint')
-      const apiKey = option(args, '--api-key')
-      if (!endpoint || !apiKey) throw new Error('login requires --endpoint and --api-key')
-      writeConfig({ endpoint, apiKey })
+async function main(): Promise<void> {
+  program
+    .command('login')
+    .description('save the server endpoint and API key (~/.vakatime/config.json)')
+    .requiredOption('--endpoint <url>', 'Vakatime server base URL')
+    .requiredOption('--api-key <key>', 'API key created in the Vakatime dashboard')
+    .action((options: { endpoint: string; apiKey: string }) => {
+      writeConfig({ endpoint: options.endpoint, apiKey: options.apiKey })
       console.log(`saved collector config to ${configPath()}`)
-      break
-    }
-    case 'setup': {
-      const agent = args[1]
-      const supported = listSupportedAgents()
-      if (!agent || !supported.includes(agent)) {
-        console.error(`setup requires a valid agent: ${supported.join(', ')}`)
-        process.exit(1)
-      }
-      setupAgent(agent as AgentType)
-      break
-    }
-    case 'remove': {
-      const agent = args[1]
-      const supported = listSupportedAgents()
-      if (!agent || !supported.includes(agent)) {
-        console.error(`remove requires a valid agent: ${supported.join(', ')}`)
-        process.exit(1)
-      }
+    })
+
+  program
+    .command('setup')
+    .description(`install hooks into an agent's native config (${agentNames}); omit <agent> for an interactive picker`)
+    .addArgument(new Argument('[agent]', 'agent to configure').choices(agentChoices))
+    .action(async (agent: string | undefined) => {
+      const { runSetupCommand } = await import('./commands/setup.js')
+      await runSetupCommand(agent)
+    })
+
+  program
+    .command('remove')
+    .description('remove only the hooks vakatime registered for an agent')
+    .addArgument(new Argument('<agent>', 'agent to unregister').choices(agentChoices))
+    .action((agent: string) => {
       removeAgent(agent as AgentType)
-      break
-    }
-    case 'status': {
-      const config = readConfig()
-      const queued = readQueue().length
-      console.log(`config: ${existsSync(configPath()) ? configPath() : 'missing'}`)
-      console.log(`endpoint: ${config?.endpoint ?? 'not configured'}`)
-      console.log(`api key: ${config ? `${config.apiKey.slice(0, 8)}...` : 'not configured'}`)
-      console.log(`queued heartbeats: ${queued}`)
-      break
-    }
-    case 'heartbeat': {
-      const entity = option(args, '--entity')
-      if (!entity) throw new Error('heartbeat requires --entity')
-      await uploadOrQueue({
-        entity,
-        type: option(args, '--type') ?? 'file',
-        category: option(args, '--category') ?? 'coding',
-        time: option(args, '--time') ?? new Date().toISOString(),
-        project: option(args, '--project'),
-        branch: option(args, '--branch'),
-        language: option(args, '--language'),
-        editor: option(args, '--editor'),
-        operating_system: process.platform,
-        machine_name: option(args, '--machine') ?? undefined,
-        is_write: has(args, '--write'),
+    })
+
+  program
+    .command('status')
+    .description('show collector config, endpoint, key prefix, and offline queue size')
+    .action(async () => {
+      const { runStatusCommand } = await import('./commands/status.js')
+      await runStatusCommand()
+    })
+
+  program
+    .command('stats')
+    .description('activity summary + heatmap built from the local hook log')
+    .option('--weeks <n>', 'heatmap width in weeks', '17')
+    .action(async (options: { weeks: string }) => {
+      const { runStatsCommand } = await import('./commands/stats.js')
+      const weeks = Number.parseInt(options.weeks, 10)
+      await runStatsCommand(Number.isFinite(weeks) && weeks > 0 ? weeks : 17)
+    })
+
+  program
+    .command('flush')
+    .description('retry heartbeats queued during network loss')
+    .action(async () => {
+      const { runFlushCommand } = await import('./commands/flush.js')
+      await runFlushCommand()
+    })
+
+  program
+    .command('heartbeat')
+    .description('upload a single heartbeat manually (useful to test the server)')
+    .requiredOption('--entity <path>', 'entity identifier (usually a file path)')
+    .option('--project <name>', 'project name')
+    .option('--branch <name>', 'git branch')
+    .option('--language <name>', 'language')
+    .option('--editor <name>', 'editor name')
+    .option('--machine <name>', 'machine name')
+    .option('--type <type>', 'entity type (default: file)')
+    .option('--category <category>', 'category (default: coding)')
+    .option('--time <iso>', 'ISO timestamp (default: now)')
+    .option('--write', 'mark as a write event', false)
+    .action(async (options) => {
+      const { runHeartbeatCommand } = await import('./commands/heartbeat.js')
+      await runHeartbeatCommand({
+        entity: options.entity,
+        project: options.project,
+        branch: options.branch,
+        language: options.language,
+        editor: options.editor,
+        machine: options.machine,
+        type: options.type,
+        category: options.category,
+        time: options.time,
+        write: options.write === true,
       })
-      break
-    }
-    case 'flush': {
-      const flushed = await flushQueue(requireConfig())
-      console.log(`flushed ${flushed} queued heartbeats`)
-      break
-    }
-    case 'hook': {
-      await runHook(args)
-      break
-    }
-    case 'help':
-    case undefined:
-      printHelp()
-      break
-    default:
-      throw new Error(`Unknown command: ${command}`)
-  }
+    })
+
+  program
+    .command('hook')
+    .description('read one agent hook payload from stdin and upload it (used by the installed hooks)')
+    .requiredOption('--source <agent>', `agent that fired the hook (${agentNames}; claude aliases claude-code)`)
+    .action(async (options: { source: string }) => {
+      await runHookCommand(['--source', options.source])
+    })
+
+  program.addHelpText(
+    'after',
+    `
+Examples:
+  $ vakatime login --endpoint http://localhost:3000 --api-key vkt_xxx
+  $ vakatime setup            # interactive agent picker
+  $ vakatime setup codex
+  $ vakatime stats            # terminal heatmap
+  $ vakatime remove codex     # uninstall the hooks for one agent
+  $ echo '<hook json>' | vakatime hook --source codex`,
+  )
+
+  await program.parseAsync(process.argv)
 }
-
-run().catch((err) => {
-  console.error(err instanceof Error ? err.message : String(err))
-  process.exit(1)
-})
-
-
